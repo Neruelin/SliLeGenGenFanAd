@@ -1,9 +1,12 @@
 use futures_util::{SinkExt, StreamExt};
 use log::*;
+use tower::load;
 use std::{net::SocketAddr, time::Duration};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::{accept_async, tungstenite::Error};
 use tungstenite::{Message, Result};
+use serde_json;
+use std::fs::File;
 
 async fn accept_connection(peer: SocketAddr, stream: TcpStream) {
     if let Err(e) = handle_connection(peer, stream).await {
@@ -23,10 +26,9 @@ async fn handle_connection(peer: SocketAddr, stream: TcpStream) -> Result<()> {
     // Echo incoming WebSocket messages and send a message periodically every second.
 
     let mut i = 0;
-    let mut j = 0;
+    let mut j = 2;
 
-    let command1 = [0, 1, 2, 2, 2, 1, 0, 0];
-    let command2 = [2, 2, 2, 1, 0, 0, 0, 1];
+    let commands = [0, 1, 2, 2, 2, 1, 0, 0]; // values are +1 because we can only send u8
 
     loop {
         tokio::select! {
@@ -45,8 +47,7 @@ async fn handle_connection(peer: SocketAddr, stream: TcpStream) -> Result<()> {
             }
             _ = interval.tick() => {
                 println!("sent");
-                // ws_sender.send(Message::Text("tick".to_owned())).await?;
-                let data: [u8; 3] = [1, command1[i % 8], command2[j % 8]];
+                let data: [u8; 3] = [1, commands[i % commands.len()], commands[j % commands.len()]];
                 ws_sender.send(Message::Binary(data.to_vec())).await?;
                 i += 1;
                 j += 1;
@@ -57,12 +58,22 @@ async fn handle_connection(peer: SocketAddr, stream: TcpStream) -> Result<()> {
     Ok(())
 }
 
+const CONFIG_FILE_PATH: &str = "../config.json";
+
+fn load_config_addr() -> String {
+    let config_file = File::open(CONFIG_FILE_PATH).unwrap();
+    let json_config: serde_json::Value = serde_json::from_reader(config_file).unwrap();
+    let mut addr: String = json_config["server_addr"].as_str().unwrap().to_string();
+    addr += ":";
+    addr += json_config["server_port"].as_str().unwrap();
+    addr
+}
+
 #[tokio::main]
 async fn main() {
-
-    let addr = "127.0.0.1:9002";
-    let listener = TcpListener::bind(&addr).await.expect("Can't listen");
+    let addr = load_config_addr();    
     println!("Listening on: {}", addr);
+    let listener = TcpListener::bind(&addr).await.expect("Can't listen");
 
     while let Ok((stream, _)) = listener.accept().await {
         let peer = stream.peer_addr().expect("connected streams should have a peer address");
