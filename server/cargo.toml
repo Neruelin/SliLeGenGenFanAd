@@ -1,0 +1,43 @@
+[package]
+name = "server"
+version = "0.1.0"
+edition = "2018"
+publish = false
+
+[[bin]]
+name = "server"
+path = "src/server.rs"
+
+[[bin]]
+name = "client"
+path = "src/client.rs"
+
+[dependencies]
+log = "0.4.17"
+tungstenite = "0.17.3"
+httparse = "1.8.0"
+base64 = "0.13.0"
+sha-1 = "0.10.0"
+futures = "0.3.25"
+tonic-ws-transport = { path = "transport", features = ["native"] }
+tonic = { version = "0.5.0", features = ["transport", "codegen", "prost"] }
+prost = "0.8.0"
+tokio = { version = "1.1.1", features = ["full"] }
+futures-util = "0.3.12"
+tokio-tungstenite = "0.17.0"
+tokio-stream = { version = "0.1.2", features = ["net"] }
+env_logger = "0.9"
+tower = "0.4.13"
+
+[build-dependencies]
+tonic-build = "0.5.0"
+
+[dev-dependencies]
+futures-channel = "0.3"
+hyper = { version = "0.14", default-features = false, features = ["http1", "server", "tcp"] }
+tokio = { version = "1.0.0", default-features = false, features = ["io-std", "macros", "net", "rt-multi-thread", "time"] }
+url = "2.0.0"
+
+[patch.crates-io]
+tonic = { git = "https://github.com/boxdot/tonic", rev = "2ed4144" }
+tonic-build = { git = "https://github.com/boxdot/tonic", rev = "2ed4144" }

@@ -1,0 +1,15 @@
+syntax = "proto3";
+package goblin;
+
+service GoblinGame {
+    rpc GetPlayerLocation (GetPlayerLocationRequest) returns (GetPlayerLocationResponse);
+}
+
+message GetPlayerLocationRequest {
+    bool test = 1;
+}
+message GetPlayerLocationResponse {
+    bool successful = 1;
+    int32 x = 2;
+    int32 y = 3;
+}
