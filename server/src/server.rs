@@ -1,12 +1,32 @@
 use futures_util::{SinkExt, StreamExt};
 use log::*;
-use tower::load;
 use std::{net::SocketAddr, time::Duration};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::{accept_async, tungstenite::Error};
 use tungstenite::{Message, Result};
 use serde_json;
 use std::fs::File;
+
+mod messages;
+use crate::messages::messages::{RawMessage, MessageType, GetEntitiesRequestMessage, NewEntityRequestMessage};
+use std::convert::TryFrom;
+
+fn handle_message(msg: Message) {
+    let rm = RawMessage::try_from(msg).unwrap();
+    let rm_type = rm.getMsgType().unwrap();
+    println!("{:?}", rm_type);
+    match rm_type {
+        MessageType::GetEntitiesRequest => {
+            let ent_req = GetEntitiesRequestMessage::try_from(rm).unwrap();
+            println!("{:?}", ent_req);
+        },
+        MessageType::NewEntityRequest => {
+            let new_ent_req = NewEntityRequestMessage::try_from(rm).unwrap();
+            println!("{:?}", new_ent_req);
+        },
+        _ => {}
+    }
+}
 
 async fn accept_connection(peer: SocketAddr, stream: TcpStream) {
     if let Err(e) = handle_connection(peer, stream).await {
@@ -36,18 +56,19 @@ async fn handle_connection(peer: SocketAddr, stream: TcpStream) -> Result<()> {
                 match msg {
                     Some(msg) => {
                         let msg = msg?;
-                        if msg.is_text() ||msg.is_binary() {
-                            ws_sender.send(msg).await?;
-                        } else if msg.is_close() {
-                            break;
-                        }
+                        handle_message(msg);
+                        // if msg.is_text() ||msg.is_binary() {
+                        //     ws_sender.send(msg).await?;
+                        // } else if msg.is_close() {
+                        //     break;
+                        // }
                     }
                     None => break,
                 }
             }
             _ = interval.tick() => {
-                println!("sent");
-                let data: [u8; 3] = [1, commands[i % commands.len()], commands[j % commands.len()]];
+                // println!("sent");
+                let mut data: [u8; 3] = [i as u8 % 2, commands[i % commands.len()], commands[j % commands.len()]];
                 ws_sender.send(Message::Binary(data.to_vec())).await?;
                 i += 1;
                 j += 1;
