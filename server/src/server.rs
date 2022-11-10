@@ -1,35 +1,65 @@
-use futures_util::{SinkExt, StreamExt};
+use futures::SinkExt;
+use futures_util::{StreamExt};
 use log::*;
+use ws_messages::ws_messages::{CreateControlEntityMessage, DisconnectMessage};
 use std::{net::SocketAddr, time::Duration};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::{accept_async, tungstenite::Error};
 use tungstenite::{Message, Result};
 use serde_json;
 use std::fs::File;
+use std::sync::{mpsc, Arc, RwLock};
 
-mod messages;
-use crate::messages::messages::{RawMessage, MessageType, GetEntitiesRequestMessage, NewEntityRequestMessage};
+mod ws_messages;
+use crate::ws_messages::ws_messages::{RawMessage, MessageType, GetEntitiesRequestMessage, NewEntityRequestMessage, ClearEntitiesRequestMessage, MoveEntityRequestMessage};
+mod game_state;
+use crate::game_state::game_state::{game_loop, Obj, Interaction};
 use std::convert::TryFrom;
 
-fn handle_message(msg: Message) {
-    let rm = RawMessage::try_from(msg).unwrap();
-    let rm_type = rm.getMsgType().unwrap();
-    println!("{:?}", rm_type);
+fn handle_message(msg: Vec<u8>, tx: mpsc::Sender<Interaction>, objss: &Arc<RwLock<Vec<Obj>>>) -> Option<Message> {
+    let rm = RawMessage { data: msg };
+    let rm_type = rm.get_msg_type().unwrap();
     match rm_type {
         MessageType::GetEntitiesRequest => {
             let ent_req = GetEntitiesRequestMessage::try_from(rm).unwrap();
-            println!("{:?}", ent_req);
+            {
+                let objsss = objss.read().unwrap();
+                Some(GetEntitiesRequestMessage::create_response(objsss, ent_req.x, ent_req.y, ent_req.w, ent_req.h))
+            }
         },
         MessageType::NewEntityRequest => {
             let new_ent_req = NewEntityRequestMessage::try_from(rm).unwrap();
-            println!("{:?}", new_ent_req);
+            tx.send(Interaction::CreateEntity { x: new_ent_req.x, y: new_ent_req.y }).unwrap();
+            None
         },
-        _ => {}
+        MessageType::ClearEntitiesRequest => {
+            let new_clear_ent_req = ClearEntitiesRequestMessage::try_from(rm).unwrap();
+            tx.send(Interaction::ClearEntities {}).unwrap();
+            None
+        },
+        MessageType::MoveEntityRequest => {
+            let new_move_ent_req = MoveEntityRequestMessage::try_from(rm).unwrap();
+            tx.send(Interaction::MoveEntity { x: new_move_ent_req.x, y: new_move_ent_req.y, id: new_move_ent_req.entity_id });
+            None
+        }
+        MessageType::CreateControlEntity => {
+            let new_create_control_ent_req = CreateControlEntityMessage::try_from(rm).unwrap();
+            let (_tx, rx) = mpsc::channel();
+            tx.send(Interaction::CreateControlEntity { tx: _tx });
+            let mut owned_obj = rx.recv().unwrap();
+            Some(CreateControlEntityMessage::create_response(owned_obj))
+        },
+        MessageType::Disconnect => {
+            let new_disconnect_req = DisconnectMessage::try_from(rm).unwrap();
+            tx.send(Interaction::DisconnectControlEntity { id: new_disconnect_req.id });
+            None
+        }
+        _ => {None}
     }
 }
 
-async fn accept_connection(peer: SocketAddr, stream: TcpStream) {
-    if let Err(e) = handle_connection(peer, stream).await {
+async fn accept_connection(peer: SocketAddr, stream: TcpStream, tx: mpsc::Sender<Interaction>, objss: Arc<RwLock<Vec<Obj>>>) {
+    if let Err(e) = handle_connection(peer, stream, tx, objss).await {
         match e {
             Error::ConnectionClosed | Error::Protocol(_) | Error::Utf8 => (),
             err => error!("Error processing connection: {}", err),
@@ -37,41 +67,43 @@ async fn accept_connection(peer: SocketAddr, stream: TcpStream) {
     }
 }
 
-async fn handle_connection(peer: SocketAddr, stream: TcpStream) -> Result<()> {
+async fn handle_connection(peer: SocketAddr, stream: TcpStream, tx: mpsc::Sender<Interaction>, objss: Arc<RwLock<Vec<Obj>>>) -> Result<()> {
     let ws_stream = accept_async(stream).await.expect("Failed to accept");
     println!("New WebSocket connection: {}", peer);
     let (mut ws_sender, mut ws_receiver) = ws_stream.split();
     let mut interval = tokio::time::interval(Duration::from_millis(1000));
-
-    // Echo incoming WebSocket messages and send a message periodically every second.
-
-    let mut i = 0;
-    let mut j = 2;
-
-    let commands = [0, 1, 2, 2, 2, 1, 0, 0]; // values are +1 because we can only send u8
 
     loop {
         tokio::select! {
             msg = ws_receiver.next() => {
                 match msg {
                     Some(msg) => {
-                        let msg = msg?;
-                        handle_message(msg);
-                        // if msg.is_text() ||msg.is_binary() {
-                        //     ws_sender.send(msg).await?;
-                        // } else if msg.is_close() {
-                        //     break;
-                        // }
+                        match msg {
+                            Ok(msg) => {
+                                match msg {
+                                    Message::Binary(m) => {
+                                        let retval = handle_message(m, tx.clone(), &objss);
+                                        match retval {
+                                            Some(vv) => {
+                                                ws_sender.send(vv).await?;
+                                            },
+                                            None => {}
+                                        }
+                                    },
+                                    _ => { 
+                                        println!("dunno what this is? {:?}", msg);
+                                    }
+                                }
+                            },
+                            _ => {}
+                        }
                     }
                     None => break,
                 }
             }
             _ = interval.tick() => {
-                // println!("sent");
-                let mut data: [u8; 3] = [i as u8 % 2, commands[i % commands.len()], commands[j % commands.len()]];
-                ws_sender.send(Message::Binary(data.to_vec())).await?;
-                i += 1;
-                j += 1;
+                // let mut data: [u8; 3] = [i as u8 % 2, commands[i % commands.len()], commands[j % commands.len()]];
+                // ws_sender.send(Message::Binary(data.to_vec())).await?;
             }
         }
     }
@@ -96,10 +128,18 @@ async fn main() {
     println!("Listening on: {}", addr);
     let listener = TcpListener::bind(&addr).await.expect("Can't listen");
 
+    let (tx, rx) = mpsc::channel();
+
+    let objss: Arc<RwLock<Vec<Obj>>> = Arc::new(RwLock::new(vec![]));
+    let objssloopclone = Arc::clone(&objss);
+    std::thread::spawn(move || {
+        game_loop(rx, objssloopclone);
+    });
+
     while let Ok((stream, _)) = listener.accept().await {
         let peer = stream.peer_addr().expect("connected streams should have a peer address");
         println!("Peer address: {}", peer);
 
-        tokio::spawn(accept_connection(peer, stream));
+        tokio::spawn(accept_connection(peer, stream, tx.clone(), Arc::clone(&objss)));
     }
 }
