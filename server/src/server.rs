@@ -90,6 +90,9 @@ async fn handle_connection(peer: SocketAddr, stream: TcpStream, tx: mpsc::Sender
                                             None => {}
                                         }
                                     },
+                                    Message::Close(close_frame) => {
+                                        println!("Peer disconnected");
+                                    },
                                     _ => { 
                                         println!("dunno what this is? {:?}", msg);
                                     }

@@ -10,8 +10,8 @@ var ws: WebSocketClient
 var ws_status = 0;
 # 0 never connected, 1 connected, -1 reconnecting
 var config_data = {
-	"server_addr": "127.0.0.1",
-	"server_port": "9002"
+	"server_addr": "3.87.64.160",
+	"server_port": "3456"
 }
 
 func handle_entity_update(update):
